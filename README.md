@@ -1,70 +1,70 @@
 # Scarlett Gen 2 Tool
 
-Утилита для Focusrite Scarlett 2i2 2nd Gen с USB ID `1235:8202`. Показывает версию прошивки и состояние Low Power Mode, переключает этот режим и записывает сборки 1051 и 1116. Поддерживаются обновление с 1051 до 1116 и возврат с 1116 на 1051.
+[Русская версия](README.ru.md)
 
-## Запуск
+Read the firmware version, toggle Low Power Mode, and switch between firmware builds 1051 and 1116 on a Focusrite Scarlett 2i2 2nd Gen (USB ID `1235:8202`).
 
-Нужны Windows 10 или 11 x64 и установленный драйвер Focusrite 4.150.0.432. Утилита сверяет SHA-256 двух файлов драйвера, поэтому другие сборки могут дать ошибку обнаружения. Подключайте одну Scarlett 2i2 2nd Gen на время работы. [Загрузки для Scarlett 2i2 2nd Gen](https://downloads.focusrite.com/focusrite/scarlett-2nd-gen/scarlett-2i2-2nd-gen) · [Пакет драйвера 4.150.0.432](https://fael-downloads-prod.focusrite.com/customer/prod/downloads/focusritedriver_4.150.0_432.exe)
+## Install or run from the ZIP
 
-Распакуйте ZIP из [релиза v1.1.0](https://github.com/bgunn9in/scarlett-gen2-tool/releases/tag/v1.1.0). В архиве два варианта запуска.
+Use Windows 10 or 11 x64 with Focusrite driver 4.150.0.432. The app checks the SHA-256 hashes of two installed driver files. A different build can cause device detection to fail. Connect one interface at a time. [Focusrite model downloads](https://downloads.focusrite.com/focusrite/scarlett-2nd-gen/scarlett-2i2-2nd-gen) · [Driver 4.150.0.432 installer](https://fael-downloads-prod.focusrite.com/customer/prod/downloads/focusritedriver_4.150.0_432.exe)
 
-- `Scarlett-Gen2-Tool-Setup.exe` устанавливает программу и оба образа для текущего пользователя и создаёт ярлык в меню «Пуск».
-- Папка `Portable` содержит `scarlett-gen2.exe`, `8202-1051.bin` и `8202-1116.bin`. Запустите EXE из этой папки. Программа ищет BIN рядом с собой при любом рабочем каталоге.
+Extract the [v1.1.0 ZIP](https://github.com/bgunn9in/scarlett-gen2-tool/releases/download/v1.1.0/scarlett-gen2-tool-v1.1.0-windows-x64.zip) and choose how to run the app.
 
-Контрольная сумма ZIP опубликована в `SHA256SUMS.txt` в том же релизе.
+- Run `Scarlett-Gen2-Tool-Setup.exe` to install the app and both firmware images for your Windows account. Setup adds a Start menu shortcut.
+- For the portable version, run `Portable\scarlett-gen2.exe`. Keep `8202-1051.bin` and `8202-1116.bin` beside the EXE. The app looks for them in its own folder regardless of the working directory.
+
+Compare the ZIP's SHA-256 hash with `SHA256SUMS.txt` from the same release. [Release files](https://github.com/bgunn9in/scarlett-gen2-tool/releases/tag/v1.1.0)
 
 ```powershell
 Get-FileHash .\scarlett-gen2-tool-v1.1.0-windows-x64.zip -Algorithm SHA256
 Get-Content .\SHA256SUMS.txt
 ```
 
-## Версия, режим питания и запись
+## Read status or change a setting
 
-При запуске окно считывает версию из USB-дескриптора и состояние Low Power Mode из сегмента `App_Env` и выводит их в отдельных блоках. Ниже находятся выбор прошивки и статус операции. После переподключения данные обновляются автоматически. Кнопка «Обновить статус» перечитывает их вручную.
+The app reads the firmware version from the USB descriptor and Low Power Mode from `App_Env`. It refreshes both when you reconnect the interface. Click `Обновить статус` (Refresh status) to read them again.
 
-- Для смены Low Power Mode нажмите «Включить» или «Выключить». Режим управляет питанием цепи фантомного питания. Утилита распознаёт два значения `PhantomPower` и показывает ошибку, если прочитать состояние не удалось.
-- Для смены прошивки выберите 1051 или 1116, нажмите «Прошить» и подтвердите переход в диалоге. Оставьте USB подключённым до завершения. Утилита сверяет хеш выбранного образа, проверяет текущую прошивку и перед перезапуском считывает весь записанный сегмент для сравнения.
+- Click `Включить` (Enable) or `Выключить` (Disable) under Low Power Mode. The mode limits current to the phantom power circuit. The app recognizes two `PhantomPower` values and shows an error if it cannot read the setting.
+- To change firmware, select 1051 or 1116, click `Прошить…` (Flash), and confirm the version change. Keep USB connected until the operation finishes. The app checks the current firmware and the selected image's hash, then reads back the entire written segment before restarting the interface.
 
-### Резервные копии и ошибки
+### Backups and failed writes
 
-Перед стиранием утилита сохраняет полную копию изменяемого сегмента в отдельной папке под `%LOCALAPPDATA%\FocusriteScarlettGen2\Backups`. Это `App_Upgrade-<версия>.bin` для прошивки или `App_Env.bin` для режима, плюс журнал `update-state.txt`. Путь появляется в окне. Если в `App_Env` найдутся другие данные, утилита прервёт смену режима до стирания.
+Before erasing a segment, the app saves a full copy under `%LOCALAPPDATA%\FocusriteScarlettGen2\Backups`. The operation status shows the folder containing `App_Upgrade-<version>.bin` for a firmware change or `App_Env.bin` for a Low Power Mode change, along with `update-state.txt`. If `App_Env` contains additional data, the app stops before erasing it.
 
-Если утилита сверила запись и просит переподключить Scarlett, переподключите её один раз и проверьте версию и состояние режима. Если ошибка возникла на этапе стирания, записи или сверки, сохраните резервную копию и журнал и проверьте, определяется ли карта. Повторная запись может лишить вас возможности оценить, на каком этапе произошёл сбой. Резервная копия содержит один сегмент. Загрузка такого файла и аварийное восстановление в утилите не реализованы.
+If the app verifies the write and asks you to reconnect the interface, reconnect it once and check the firmware version and mode. If erasing, writing, or readback fails, keep the backup and log and check whether Windows still detects the interface before trying another write. The backup covers one segment. The app has no command to restore it or recover an undetected device.
 
-## Образы прошивок
+## Firmware images
 
-В `firmware/` лежат оригинальные образы для USB PID `8202`. Утилита передаёт выбранный образ в сегмент `App_Upgrade`.
+The files in `firmware/` are original Focusrite images for PID `8202`. The app writes the selected image to `App_Upgrade` through the Focusrite driver's PAL interface.
 
-| Файл | Источник и смещение в распакованном файле | SHA-256 |
+| File | Source and offset in the extracted executable | SHA-256 |
 | --- | --- | --- |
-| [`8202-1051.bin`](firmware/8202-1051.bin) | Windows Updater 1.0.1.165, PE `Scarlett (2nd Gen) Firmware Updater.exe`, `0x183410`, 64 000 байт | `f8084934586ad894d5c740d4ac6d7232b00dd48da47f12f1c8206477261f021f` |
-| [`8202-1116.bin`](firmware/8202-1116.bin) | macOS Updater 1.0.1.178, Mach-O `ScarlettUpdater`, ресурс `Scarlett_2i2S_bin`, `0x116420`, 64 256 байт | `49782a53d27664c5d58494e69d347410e7996f2af1687bb3ea8e2820ab720c98` |
+| [`8202-1051.bin`](firmware/8202-1051.bin) | Windows updater 1.0.1.165, PE `Scarlett (2nd Gen) Firmware Updater.exe`, offset `0x183410`, 64,000 bytes | `f8084934586ad894d5c740d4ac6d7232b00dd48da47f12f1c8206477261f021f` |
+| [`8202-1116.bin`](firmware/8202-1116.bin) | macOS updater 1.0.1.178, Mach-O `ScarlettUpdater`, resource `Scarlett_2i2S_bin`, offset `0x116420`, 64,256 bytes | `49782a53d27664c5d58494e69d347410e7996f2af1687bb3ea8e2820ab720c98` |
 
-Образ 1116 извлечён из апдейтера для macOS. Утилита Windows записывает его через интерфейс PAL штатного драйвера Focusrite. [Оригинальный пакет 1.0.1.165 для Windows](https://fael-downloads-prod.focusrite.com/customer/prod/s3fs-public/focusrite/downloads/31626/scarlett-2nd-gen-firmware-updater-1.0.1.165.exe) · [Оригинальный пакет 1.0.1.178 для macOS](https://fael-downloads-prod.focusrite.com/customer/prod/s3fs-public/focusrite/downloads/32269/scarlettupdater-1.0.1.178.dmg)
-
-Чтобы повторить извлечение, запустите `prepare-firmware.ps1` с путями к [innoextract](https://github.com/UserUnknownFactor/innoextract_win/releases/tag/670) и [7-Zip](https://www.7-zip.org/). Скрипт скачает официальные пакеты, сверит их SHA-256 и проверит полученные образы. Установщики при извлечении не запускаются.
+To extract the images yourself, give `prepare-firmware.ps1` the paths to innoextract and 7-Zip. The script downloads the original packages, checks their hashes, and verifies the extracted images. Extraction does not run the installers. [Focusrite Windows package 1.0.1.165](https://fael-downloads-prod.focusrite.com/customer/prod/s3fs-public/focusrite/downloads/31626/scarlett-2nd-gen-firmware-updater-1.0.1.165.exe) · [Focusrite macOS package 1.0.1.178](https://fael-downloads-prod.focusrite.com/customer/prod/s3fs-public/focusrite/downloads/32269/scarlettupdater-1.0.1.178.dmg) · [innoextract](https://github.com/UserUnknownFactor/innoextract_win/releases/tag/670) · [7-Zip](https://www.7-zip.org/)
 
 ```powershell
 .\prepare-firmware.ps1 -Innoextract 'C:\Tools\innoextract.exe' -SevenZip 'C:\Program Files\7-Zip\7z.exe'
 ```
 
-Скрипт сохранит образы в `build\`. Для готового релиза можно указать папку с EXE параметром `-OutputDirectory`.
+The script saves the images to `build\`. To put them beside an existing EXE, pass its folder as `-OutputDirectory`.
 
-## Сборка и проверка
+## Build and test
 
-Откройте **Developer PowerShell for VS** для x64 с установленным MSVC и Windows SDK. Для сборки используются образы из `firmware/`.
+Open Developer PowerShell for VS with the x64 MSVC tools and Windows SDK installed. The build uses the images in `firmware/`.
 
 ```powershell
 .\build.ps1
 .\build\scarlett1116.exe --self-test-full .\build\8202-1051.bin .\build\8202-1116.bin
 ```
 
-Скрипт собирает `build\scarlett-gen2.exe`, копирует к нему оба образа и собирает консольный `build\scarlett1116.exe` для тестов и диагностики.
+The build produces `build\scarlett-gen2.exe` with both images beside it and `build\scarlett1116.exe` for testing and diagnostics.
 
-Для сборки ZIP с установщиком укажите путь к компилятору [Inno Setup](https://jrsoftware.org/inno-setup/downloads). Готовые ZIP и SHA-256 появятся в `build\release-v1.1.0\`.
+To build the ZIP and installer, pass the path to the Inno Setup compiler. The ZIP and checksum file go to `build\release-v1.1.0\`. [Inno Setup](https://jrsoftware.org/inno-setup/downloads)
 
 ```powershell
 .\package.ps1 -InnoCompiler 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' -Version 1.1.0
 ```
 
-На Scarlett под Windows 11 с GUI проверили обнаружение, чтение версии 1116 (`0x045C`) и выключенный Low Power Mode. Отдельный запуск консольного апдейтера ранее подтвердил переход с 1051 на 1116 на карте. На имитаторе транспорта проверили запись в обе стороны, включение и выключение Low Power Mode, остановку при ошибке записи и отказ при несовпадении данных.
+On Windows 11, the GUI detected a connected Scarlett and displayed firmware 1116 (`0x045C`) with Low Power Mode off. A separate run of the command-line updater moved the physical unit from 1051 to 1116. The transport tests simulated upgrades, downgrades, both mode changes, and failed or rejected writes.
