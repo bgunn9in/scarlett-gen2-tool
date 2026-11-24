@@ -8,24 +8,26 @@ Read the firmware version, toggle Low Power Mode, and switch between firmware bu
 
 Use Windows 10 or 11 x64 with Focusrite driver 4.150.0.432. The app checks the SHA-256 hashes of two installed driver files. A different build can cause device detection to fail. Connect one interface at a time. [Focusrite model downloads](https://downloads.focusrite.com/focusrite/scarlett-2nd-gen/scarlett-2i2-2nd-gen) · [Driver 4.150.0.432 installer](https://fael-downloads-prod.focusrite.com/customer/prod/downloads/focusritedriver_4.150.0_432.exe)
 
-Extract the [v1.1.0 ZIP](https://github.com/bgunn9in/scarlett-gen2-tool/releases/download/v1.1.0/scarlett-gen2-tool-v1.1.0-windows-x64.zip) and choose how to run the app.
+Extract the [v1.2.0 ZIP](https://github.com/bgunn9in/scarlett-gen2-tool/releases/download/v1.2.0/scarlett-gen2-tool-v1.2.0-windows-x64.zip) and choose how to run the app.
 
 - Run `Scarlett-Gen2-Tool-Setup.exe` to install the app and both firmware images for your Windows account. Setup adds a Start menu shortcut.
 - For the portable version, run `Portable\scarlett-gen2.exe`. Keep `8202-1051.bin` and `8202-1116.bin` beside the EXE. The app looks for them in its own folder regardless of the working directory.
 
-Compare the ZIP's SHA-256 hash with `SHA256SUMS.txt` from the same release. [Release files](https://github.com/bgunn9in/scarlett-gen2-tool/releases/tag/v1.1.0)
+Compare the ZIP's SHA-256 hash with `SHA256SUMS.txt` from the same release. [Release files](https://github.com/bgunn9in/scarlett-gen2-tool/releases/tag/v1.2.0)
 
 ```powershell
-Get-FileHash .\scarlett-gen2-tool-v1.1.0-windows-x64.zip -Algorithm SHA256
+Get-FileHash .\scarlett-gen2-tool-v1.2.0-windows-x64.zip -Algorithm SHA256
 Get-Content .\SHA256SUMS.txt
 ```
 
 ## Read status or change a setting
 
-The app reads the firmware version from the USB descriptor and Low Power Mode from `App_Env`. It refreshes both when you reconnect the interface. Click `Обновить статус` (Refresh status) to read them again.
+The app starts in English. Choose `Русский` from the `Language` list in the top right to switch to Russian. The app remembers your choice.
 
-- Click `Включить` (Enable) or `Выключить` (Disable) under Low Power Mode. The mode limits current to the phantom power circuit. The app recognizes two `PhantomPower` values and shows an error if it cannot read the setting.
-- To change firmware, select 1051 or 1116, click `Прошить…` (Flash), and confirm the version change. Keep USB connected until the operation finishes. The app checks the current firmware and the selected image's hash, then reads back the entire written segment before restarting the interface.
+The app reads the firmware version from the USB descriptor and Low Power Mode from `App_Env`. It refreshes both when you reconnect the interface. Click `Refresh status` to read them again.
+
+- Click `Enable` or `Disable` under Low Power Mode. The mode limits current to the phantom power circuit. The app recognizes two `PhantomPower` values and shows an error if it cannot read the setting.
+- To change firmware, select 1051 or 1116, click `Flash…`, and confirm the version change. Keep USB connected until the operation finishes. The app checks the current firmware and the selected image's hash, then reads back the entire written segment before restarting the interface.
 
 ### Backups and failed writes
 
@@ -61,10 +63,10 @@ Open Developer PowerShell for VS with the x64 MSVC tools and Windows SDK install
 
 The build produces `build\scarlett-gen2.exe` with both images beside it and `build\scarlett1116.exe` for testing and diagnostics.
 
-To build the ZIP and installer, pass the path to the Inno Setup compiler. The ZIP and checksum file go to `build\release-v1.1.0\`. [Inno Setup](https://jrsoftware.org/inno-setup/downloads)
+To build the ZIP and installer, pass the path to the Inno Setup compiler. The ZIP and checksum file go to `build\release-v1.2.0\`. [Inno Setup](https://jrsoftware.org/inno-setup/downloads)
 
 ```powershell
-.\package.ps1 -InnoCompiler 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' -Version 1.1.0
+.\package.ps1 -InnoCompiler 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' -Version 1.2.0
 ```
 
 On Windows 11, the GUI detected a connected Scarlett and displayed firmware 1116 (`0x045C`) with Low Power Mode off. A separate run of the command-line updater moved the physical unit from 1051 to 1116. The transport tests simulated upgrades, downgrades, both mode changes, and failed or rejected writes.

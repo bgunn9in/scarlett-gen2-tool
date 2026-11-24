@@ -8,7 +8,7 @@
 
 Нужны Windows 10 или 11 x64 и установленный драйвер Focusrite 4.150.0.432. Утилита сверяет SHA-256 двух файлов драйвера, поэтому другие сборки могут дать ошибку обнаружения. Подключайте одну Scarlett 2i2 2nd Gen на время работы. [Загрузки для Scarlett 2i2 2nd Gen](https://downloads.focusrite.com/focusrite/scarlett-2nd-gen/scarlett-2i2-2nd-gen) · [Пакет драйвера 4.150.0.432](https://fael-downloads-prod.focusrite.com/customer/prod/downloads/focusritedriver_4.150.0_432.exe)
 
-Распакуйте ZIP из [релиза v1.1.0](https://github.com/bgunn9in/scarlett-gen2-tool/releases/tag/v1.1.0).
+Распакуйте ZIP из [релиза v1.2.0](https://github.com/bgunn9in/scarlett-gen2-tool/releases/tag/v1.2.0).
 
 - `Scarlett-Gen2-Tool-Setup.exe` устанавливает программу и оба образа для текущего пользователя и создаёт ярлык в меню «Пуск».
 - Папка `Portable` содержит `scarlett-gen2.exe`, `8202-1051.bin` и `8202-1116.bin`. Запустите EXE из этой папки. Программа ищет BIN рядом с собой при любом рабочем каталоге.
@@ -16,11 +16,13 @@
 Контрольная сумма ZIP опубликована в `SHA256SUMS.txt` в том же релизе.
 
 ```powershell
-Get-FileHash .\scarlett-gen2-tool-v1.1.0-windows-x64.zip -Algorithm SHA256
+Get-FileHash .\scarlett-gen2-tool-v1.2.0-windows-x64.zip -Algorithm SHA256
 Get-Content .\SHA256SUMS.txt
 ```
 
 ## Версия, режим питания и запись
+
+При первом запуске интерфейс на английском. Выберите `Русский` в списке `Language` в правом верхнем углу. Программа запомнит выбор.
 
 При запуске окно считывает версию из USB-дескриптора и состояние Low Power Mode из сегмента `App_Env` и выводит их в отдельных блоках. Ниже находятся выбор прошивки и статус операции. После переподключения данные обновляются автоматически. Кнопка «Обновить статус» перечитывает их вручную.
 
@@ -63,10 +65,10 @@ Get-Content .\SHA256SUMS.txt
 
 Скрипт собирает `build\scarlett-gen2.exe`, копирует к нему оба образа и собирает консольный `build\scarlett1116.exe` для тестов и диагностики.
 
-Для сборки ZIP с установщиком укажите путь к компилятору [Inno Setup](https://jrsoftware.org/inno-setup/downloads). Готовые ZIP и SHA-256 появятся в `build\release-v1.1.0\`.
+Для сборки ZIP с установщиком укажите путь к компилятору [Inno Setup](https://jrsoftware.org/inno-setup/downloads). Готовые ZIP и SHA-256 появятся в `build\release-v1.2.0\`.
 
 ```powershell
-.\package.ps1 -InnoCompiler 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' -Version 1.1.0
+.\package.ps1 -InnoCompiler 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' -Version 1.2.0
 ```
 
 На Scarlett под Windows 11 с GUI проверили обнаружение, чтение версии 1116 (`0x045C`) и выключенный Low Power Mode. Отдельный запуск консольного апдейтера ранее подтвердил переход с 1051 на 1116 на карте. На имитаторе транспорта проверили запись в обе стороны, включение и выключение Low Power Mode, остановку при ошибке записи и отказ при несовпадении данных.

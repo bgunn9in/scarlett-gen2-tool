@@ -18,7 +18,7 @@ Push-Location -LiteralPath $output
 try {
     $compile = @('/nologo', '/std:c++20', '/EHsc', '/W4', '/WX', '/O2', '/MT', '/guard:cf', '/utf-8')
     $link = @('/link', '/GUARD:CF', '/MACHINE:X64', '/Brepro', 'setupapi.lib', 'bcrypt.lib', 'kernel32.lib')
-    & $compiler @compile '/Fescarlett-gen2.exe' (Join-Path $source 'gui.cpp') @link '/SUBSYSTEM:WINDOWS' user32.lib gdi32.lib shell32.lib
+    & $compiler @compile '/Fescarlett-gen2.exe' (Join-Path $source 'gui.cpp') @link '/SUBSYSTEM:WINDOWS' '/MANIFEST:EMBED' user32.lib gdi32.lib shell32.lib advapi32.lib comctl32.lib
     if ($LASTEXITCODE -ne 0) { throw "GUI compilation failed (exit $LASTEXITCODE)." }
     & $compiler @compile '/Fescarlett1116.exe' (Join-Path $source 'updater.cpp') @link
     if ($LASTEXITCODE -ne 0) { throw "CLI compilation failed (exit $LASTEXITCODE)." }

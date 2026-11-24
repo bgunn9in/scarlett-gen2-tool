@@ -1,6 +1,7 @@
 #define SCARLETT_GUI
 #include "updater.cpp"
 
+#include <commctrl.h>
 #include <dbt.h>
 #include <shellapi.h>
 #include <filesystem>
@@ -14,13 +15,28 @@ namespace {
 constexpr UINT result_message = WM_APP + 1, stage_message = WM_APP + 2;
 constexpr UINT_PTR refresh_timer = 1;
 constexpr int client_width = 616, client_height = 480, header_height = 110;
-enum Button { refresh = 101, enable, disable, builds, install };
+enum ControlId { refresh = 101, enable, disable, builds, install, language_choice };
+enum class Language { english, russian };
 enum class Operation { read, power, firmware };
+
+const wchar_t* tr(Language language, const wchar_t* english, const wchar_t* russian) {
+    return language == Language::russian ? russian : english;
+}
+
+constexpr wchar_t preferences[] = L"Software\\ScarlettGen2Tool";
+
+Language load_language() {
+    DWORD value = 0;
+    DWORD size = sizeof(value);
+    const auto result = RegGetValueW(HKEY_CURRENT_USER, preferences, L"Language", RRF_RT_REG_DWORD,
+                                     nullptr, &value, &size);
+    return result == ERROR_SUCCESS && value == 1 ? Language::russian : Language::english;
+}
 
 struct Snapshot {
     std::optional<unsigned> firmware;
     std::optional<bool> power;
-    std::wstring error;
+    std::optional<Error> error;
 };
 
 struct Job {
@@ -30,18 +46,34 @@ struct Job {
     bool automatic = false;
 };
 
-struct Result {
-    Snapshot snapshot;
-    std::wstring status;
+enum class StatusKind { reading, read_done, detection_error, power_error, phase, firmware_verified,
+                        power_verified, reconnect, missing_image, failed, unexpected, read_failed };
+
+struct Status {
+    StatusKind kind = StatusKind::reading;
+    const char* phase = "preflight";
+    std::optional<Error> error;
+    unsigned target = 0;
+    std::wstring directory;
 };
 
-std::wstring display_error(const Error& error) {
+struct Result {
+    Snapshot snapshot;
+    Status status;
+};
+
+std::wstring display_error(Language language, const Error& error) {
     const std::string_view step(error.step);
-    if (step == "unknown-PhantomPower-setting") return L"неизвестное значение PhantomPower в App_Env";
-    if (step == "App_Env-contains-additional-data") return L"в App_Env есть дополнительные данные";
-    if (step == "unexpected-current-App_Upgrade") return L"содержимое App_Upgrade отличается от исходного образа";
-    if (step == "power-setting-changed" || step == "firmware-changed") return L"состояние карты изменилось";
-    if (step == "image-size" || step == "image-SHA256") return L"файл прошивки отличается от оригинала";
+    if (step == "unknown-PhantomPower-setting")
+        return tr(language, L"unknown PhantomPower value in App_Env", L"неизвестное значение PhantomPower в App_Env");
+    if (step == "App_Env-contains-additional-data")
+        return tr(language, L"App_Env contains additional data", L"в App_Env есть дополнительные данные");
+    if (step == "unexpected-current-App_Upgrade")
+        return tr(language, L"App_Upgrade differs from the original image", L"содержимое App_Upgrade отличается от исходного образа");
+    if (step == "power-setting-changed" || step == "firmware-changed")
+        return tr(language, L"the interface state changed", L"состояние карты изменилось");
+    if (step == "image-size" || step == "image-SHA256")
+        return tr(language, L"the firmware file differs from the original", L"файл прошивки отличается от оригинала");
     return std::wstring(step.begin(), step.end()) + L" (" + std::to_wstring(error.code) + L")";
 }
 
@@ -59,7 +91,7 @@ Snapshot read_device() {
         snapshot.firmware = device.version();
         snapshot.power = read_power(device);
     } catch (const Error& error) {
-        snapshot.error = display_error(error);
+        snapshot.error = error;
     }
     return snapshot;
 }
@@ -92,37 +124,70 @@ std::wstring backup_path() {
     return (root / name).wstring();
 }
 
-const wchar_t* phase_text(std::string_view phase) {
-    if (phase == "backup-saved") return L"Резервная копия сохранена";
-    if (phase == "erase-requested") return L"Стирание выбранного сегмента";
-    if (phase == "programming") return L"Запись";
-    if (phase == "verifying-readback") return L"Сверка записанных данных";
-    if (phase == "restart-requested") return L"Перезапуск Scarlett";
-    if (phase == "awaiting-reconnect") return L"Ожидание повторного подключения Scarlett";
-    return L"Проверка карты перед записью";
+const wchar_t* phase_text(Language language, std::string_view phase) {
+    if (phase == "backup-saved") return tr(language, L"Backup saved", L"Резервная копия сохранена");
+    if (phase == "erase-requested") return tr(language, L"Erasing the selected segment", L"Стирание выбранного сегмента");
+    if (phase == "programming") return tr(language, L"Writing", L"Запись");
+    if (phase == "verifying-readback") return tr(language, L"Verifying the written data", L"Сверка записанных данных");
+    if (phase == "restart-requested") return tr(language, L"Restarting Scarlett", L"Перезапуск Scarlett");
+    if (phase == "awaiting-reconnect") return tr(language, L"Waiting for Scarlett to reconnect", L"Ожидание повторного подключения Scarlett");
+    return tr(language, L"Checking the interface before writing", L"Проверка карты перед записью");
+}
+
+std::wstring status_text(Language language, const Status& status) {
+    using enum StatusKind;
+    const auto detail = [&] {
+        return status.error ? display_error(language, *status.error) : std::wstring{};
+    };
+    std::wstring text;
+    switch (status.kind) {
+    case reading: text = tr(language, L"Reading Scarlett…", L"Чтение Scarlett…"); break;
+    case read_done: text = tr(language, L"Device status updated.", L"Данные устройства обновлены."); break;
+    case detection_error: text = tr(language, L"Could not detect Scarlett: ", L"Ошибка обнаружения: ") + detail(); break;
+    case power_error: text = tr(language, L"Could not read Low Power Mode: ", L"Ошибка чтения Low Power Mode: ") + detail(); break;
+    case phase: text = phase_text(language, status.phase); break;
+    case firmware_verified:
+        text = tr(language, L"Firmware verified after restart.", L"Прошивка подтверждена после перезапуска."); break;
+    case power_verified:
+        text = tr(language, L"Low Power Mode verified after restart.", L"Режим подтверждён после перезапуска."); break;
+    case reconnect:
+        text = tr(language, L"Write verified. Reconnect Scarlett to confirm its status.",
+                            L"Запись сверена. Для подтверждения состояния переподключите Scarlett."); break;
+    case missing_image:
+        text = tr(language, L"Could not open 8202-", L"Не удалось открыть 8202-") + std::to_wstring(status.target) +
+            tr(language, L".bin beside the EXE. See the firmware section in the README.",
+                         L".bin рядом с EXE. См. раздел о прошивке в README."); break;
+    case failed:
+        text = std::wstring(phase_text(language, status.phase)) + tr(language, L" failed: ", L" — ошибка: ") + detail(); break;
+    case unexpected:
+        text = std::wstring(phase_text(language, status.phase)) +
+               tr(language, L" failed unexpectedly.", L" — непредвиденная ошибка."); break;
+    case read_failed:
+        text = status.error ? detail() : tr(language, L"Unexpected error while reading Scarlett.",
+                                                     L"Непредвиденная ошибка при чтении карты."); break;
+    }
+    if (!status.directory.empty())
+        text += tr(language, L"\r\nOperation folder: ", L"\r\nПапка операции: ") + status.directory;
+    return text;
 }
 
 Result run_job(HWND window, Job job) {
     if (job.operation == Operation::read) {
         auto snapshot = read_device();
-        auto status = !snapshot.firmware ? L"Ошибка обнаружения: " + snapshot.error :
-                      !snapshot.power ? L"Ошибка чтения Low Power Mode: " + snapshot.error :
-                      std::wstring(L"Данные устройства обновлены.");
+        Status status;
+        status.kind = !snapshot.firmware ? StatusKind::detection_error :
+                      !snapshot.power ? StatusKind::power_error : StatusKind::read_done;
+        status.error = snapshot.error;
         return {std::move(snapshot), std::move(status)};
     }
     const bool firmware = job.operation == Operation::firmware;
     const bool target_power = !job.power;
-    const wchar_t* phase = phase_text("preflight");
-    std::wstring directory;
+    Status status;
     Backup backup;
     const auto stage = [&](const char* name) {
         backup.stage(name);
-        phase = phase_text(name);
-        PostMessageW(window, stage_message, 0, reinterpret_cast<LPARAM>(phase));
-    };
-    auto with_path = [&](std::wstring status) {
-        if (!directory.empty()) status += L"\r\nПапка операции: " + directory;
-        return status;
+        status.phase = name;
+        PostMessageW(window, stage_message, 0, reinterpret_cast<LPARAM>(name));
     };
     try {
         const auto image = firmware ? local_image(job.target) : Bytes{};
@@ -139,8 +204,8 @@ Result run_job(HWND window, Job job) {
             } else {
                 original = prepare_power(device, job.power);
             }
-            directory = backup_path();
-            backup.save(directory, filename.c_str(), original);
+            status.directory = backup_path();
+            backup.save(status.directory, filename.c_str(), original);
             stage("backup-saved");
             program_segment(device, firmware ? upgrade_index : env_index, payload, stage, [] { Sleep(100); });
         }
@@ -153,29 +218,33 @@ Result run_job(HWND window, Job job) {
                                   current.firmware == job.current && current.power == target_power;
             if (verified) {
                 backup.stage("verified-after-reconnect");
-                return {std::move(current), with_path(firmware ? L"Прошивка подтверждена после перезапуска."
-                                                                : L"Режим подтверждён после перезапуска.")};
+                status.kind = firmware ? StatusKind::firmware_verified : StatusKind::power_verified;
+                return {std::move(current), std::move(status)};
             }
         }
-        return {std::move(current), with_path(L"Запись сверена. Для подтверждения состояния переподключите Scarlett.")};
+        status.kind = StatusKind::reconnect;
+        return {std::move(current), std::move(status)};
     } catch (const Error& error) {
-        if (std::string_view(error.step) == "image-open") {
-            return {read_device(), L"Не удалось открыть 8202-" + std::to_wstring(job.target) +
-                L".bin рядом с EXE. См. подготовку прошивки в README."};
-        }
-        return {read_device(), with_path(std::wstring(phase) + L" — ошибка: " + display_error(error))};
+        status.kind = std::string_view(error.step) == "image-open" ? StatusKind::missing_image : StatusKind::failed;
+        status.error = error;
+        status.target = job.target;
+        return {read_device(), std::move(status)};
     } catch (...) {
-        return {{}, with_path(std::wstring(phase) + L" — непредвиденная ошибка.")};
+        status.kind = StatusKind::unexpected;
+        return {{}, std::move(status)};
     }
 }
 
 struct Window {
     HWND title = nullptr, device = nullptr, firmware = nullptr, revision = nullptr, power = nullptr, status = nullptr;
     HWND refresh_button = nullptr, on = nullptr, off = nullptr, combo = nullptr, write = nullptr;
+    HWND language_label = nullptr, language_picker = nullptr, firmware_label = nullptr, write_label = nullptr, status_label = nullptr;
     HFONT regular = nullptr, section = nullptr, value = nullptr, heading = nullptr;
     UINT dpi = USER_DEFAULT_SCREEN_DPI;
     bool high_contrast = false;
+    Language language = Language::english;
     Snapshot snapshot;
+    Status operation_status;
     std::thread worker;
     std::wstring check;
     bool refresh_pending = false;
@@ -259,6 +328,7 @@ void update_controls(const Window& ui) {
     const bool idle = !ui.worker.joinable();
     const bool supported = ui.snapshot.firmware && supported_build(*ui.snapshot.firmware);
     const auto target = chosen_build(ui);
+    EnableWindow(ui.language_picker, idle);
     EnableWindow(ui.refresh_button, idle);
     EnableWindow(ui.on, idle && supported && ui.snapshot.power == false);
     EnableWindow(ui.off, idle && supported && ui.snapshot.power == true);
@@ -267,28 +337,65 @@ void update_controls(const Window& ui) {
 }
 
 void show_snapshot(const Window& ui) {
-    SetWindowTextW(ui.device, ui.snapshot.firmware ? L"Подключена · USB 1235:8202" : L"Scarlett не обнаружена");
+    const auto language = ui.language;
+    SetWindowTextW(ui.device, ui.snapshot.firmware ? tr(language, L"Connected · USB 1235:8202", L"Подключена · USB 1235:8202") :
+        ui.operation_status.kind == StatusKind::reading ? tr(language, L"Looking for Scarlett…", L"Поиск Scarlett…") :
+        tr(language, L"Scarlett not detected", L"Scarlett не обнаружена"));
     SetWindowTextW(ui.firmware, ui.snapshot.firmware ? std::to_wstring(*ui.snapshot.firmware).c_str() : L"—");
     SetWindowTextW(ui.revision, ui.snapshot.firmware ? revision_text(*ui.snapshot.firmware).c_str() : L"");
-    SetWindowTextW(ui.power, ui.snapshot.power ? (*ui.snapshot.power ? L"Включён" : L"Выключен") :
-                             ui.snapshot.firmware ? L"Ошибка чтения" : L"—");
+    const auto* power = ui.snapshot.power ? (*ui.snapshot.power ? tr(language, L"Enabled", L"Включён") :
+                                                                  tr(language, L"Disabled", L"Выключен")) :
+                        ui.snapshot.firmware ? tr(language, L"Read error", L"Ошибка чтения") : L"—";
+    SetWindowTextW(ui.power, power);
     const RECT indicator{px(ui, 27), px(ui, 79), px(ui, 39), px(ui, 91)};
     InvalidateRect(GetParent(ui.device), &indicator, FALSE);
+}
+
+void show_status(const Window& ui) {
+    SetWindowTextW(ui.status, status_text(ui.language, ui.operation_status).c_str());
+}
+
+void apply_language(const Window& ui) {
+    const auto language = ui.language;
+    SetWindowTextW(ui.language_label, tr(language, L"Language", L"Язык"));
+    SetWindowTextW(ui.refresh_button, tr(language, L"Refresh status", L"Обновить статус"));
+    SetWindowTextW(ui.firmware_label, tr(language, L"Current firmware", L"Текущая прошивка"));
+    SetWindowTextW(ui.on, tr(language, L"Enable", L"Включить"));
+    SetWindowTextW(ui.off, tr(language, L"Disable", L"Выключить"));
+    SetWindowTextW(ui.write_label, tr(language, L"Flash firmware", L"Запись прошивки"));
+    SetWindowTextW(ui.write, tr(language, L"Flash…", L"Прошить…"));
+    SetWindowTextW(ui.status_label, tr(language, L"Operation status", L"Статус операции"));
+
+    const auto selected = SendMessageW(ui.combo, CB_GETCURSEL, 0, 0);
+    SendMessageW(ui.combo, CB_RESETCONTENT, 0, 0);
+    for (const auto build : {0u, old_build, new_build}) {
+        const auto text = build ? std::to_wstring(build) : tr(language, L"Select a version", L"Выбрать версию");
+        const auto row = SendMessageW(ui.combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(text.c_str()));
+        require(row >= 0 && SendMessageW(ui.combo, CB_SETITEMDATA, static_cast<WPARAM>(row), build) != CB_ERR,
+                "init-GUI-firmware-list");
+    }
+    SendMessageW(ui.combo, CB_SETCURSEL, selected == CB_ERR ? 0 : static_cast<WPARAM>(selected), 0);
+    show_snapshot(ui);
+    show_status(ui);
 }
 
 void start_job(HWND hwnd, Window& ui, Job job) {
     if (ui.worker.joinable()) return;
     auto result = std::make_unique<Result>();
     ui.automatic_read = job.automatic;
-    if (!job.automatic)
-        SetWindowTextW(ui.status, job.operation == Operation::read ? L"Чтение Scarlett…" : phase_text("preflight"));
+    if (!job.automatic) {
+        ui.operation_status = {};
+        if (job.operation != Operation::read) ui.operation_status.kind = StatusKind::phase;
+        show_status(ui);
+    }
     ui.worker = std::thread([hwnd, job, result = std::move(result)]() mutable {
         try {
             *result = run_job(hwnd, job);
         } catch (const Error& error) {
-            result->status = display_error(error);
+            result->status.kind = StatusKind::read_failed;
+            result->status.error = error;
         } catch (...) {
-            result->status = L"Непредвиденная ошибка при чтении карты.";
+            result->status.kind = StatusKind::read_failed;
         }
         auto* value = result.release();
         if (!PostMessageW(hwnd, result_message, 0, reinterpret_cast<LPARAM>(value))) delete value;
@@ -302,7 +409,8 @@ std::wstring control_text(HWND control) {
     return text;
 }
 
-void check_window(Window& ui) {
+void check_window(HWND hwnd, Window& ui) {
+    const auto initial_language = ui.language;
     const auto device = control_text(ui.device);
     const auto firmware = control_text(ui.firmware);
     const auto revision = control_text(ui.revision);
@@ -311,16 +419,36 @@ void check_window(Window& ui) {
     const bool rendering_ok = ui.snapshot.firmware && ui.snapshot.power &&
         device.find(L"1235:8202") != std::wstring::npos &&
         firmware == std::to_wstring(*ui.snapshot.firmware) && revision == revision_text(*ui.snapshot.firmware) &&
-        power == (*ui.snapshot.power ? L"Включён" : L"Выключен");
+        power == (*ui.snapshot.power ? tr(initial_language, L"Enabled", L"Включён") :
+                                     tr(initial_language, L"Disabled", L"Выключен"));
     ui.report_error = !rendering_ok;
+    SendMessageW(ui.combo, CB_SETCURSEL, 1, 0);
+    std::wstring language_checks = L"Startup language: ";
+    language_checks += tr(initial_language, L"en\r\n", L"ru\r\n");
+    for (const auto language : {Language::english, Language::russian}) {
+        SendMessageW(ui.language_picker, CB_SETCURSEL, static_cast<WPARAM>(language), 0);
+        SendMessageW(hwnd, WM_COMMAND, MAKEWPARAM(language_choice, CBN_SELCHANGE),
+                     reinterpret_cast<LPARAM>(ui.language_picker));
+        const auto refresh_text = control_text(ui.refresh_button);
+        const auto flash_text = control_text(ui.write);
+        const auto current_status = control_text(ui.status);
+        if (ui.language != language || chosen_build(ui) != old_build ||
+            refresh_text != tr(language, L"Refresh status", L"Обновить статус") ||
+            flash_text != tr(language, L"Flash…", L"Прошить…") ||
+            current_status != tr(language, L"Device status updated.", L"Данные устройства обновлены.")) {
+            ui.report_error = true;
+        }
+        language_checks += (std::wstring(tr(language, L"en: ", L"ru: ")) + refresh_text +
+                            L" | " + flash_text + L" | " + current_status + L"\r\n");
+    }
     std::wstring files;
     try {
         (void)local_image(old_build);
         (void)local_image(new_build);
-        files = L"SHA-256 обоих файлов рядом с EXE подтверждён.";
+        files = L"Both firmware files beside the EXE passed SHA-256 verification.";
     } catch (const Error& error) {
         ui.report_error = true;
-        files = L"Ошибка проверки файлов прошивки: " + display_error(error);
+        files = L"Firmware file check failed: " + display_error(initial_language, error);
     }
     std::wstring preflight;
     if (ui.snapshot.firmware && supported_build(*ui.snapshot.firmware) && ui.snapshot.power) {
@@ -329,16 +457,16 @@ void check_window(Window& ui) {
             const auto version = *ui.snapshot.firmware;
             (void)prepare_firmware(connection, version);
             (void)prepare_power(connection, *ui.snapshot.power);
-            preflight = L"Каждый сегмент считан дважды. App_Upgrade соответствует образу. "
-                        L"App_Env содержит только PhantomPower.";
+            preflight = L"Both segments read twice. App_Upgrade matches the original image. App_Env contains only PhantomPower.";
         } catch (const Error& error) {
             ui.report_error = true;
-            preflight = L"Ошибка предпроверки сегментов: " + display_error(error);
+            preflight = L"Segment check failed: " + display_error(initial_language, error);
         }
     }
-    const auto report = L"\ufeff" + control_text(ui.title) + L"\r\n" + device + L"\r\nПрошивка: " +
+    const auto report = L"\ufeff" + control_text(ui.title) + L"\r\n" + device + L"\r\nFirmware: " +
         firmware + L" (" + revision + L")\r\nLow Power Mode: " + power + L"\r\n" + status +
-        L"\r\nОшибка чтения: " + ui.snapshot.error + L"\r\nРежим проверки: чтение.\r\n" + files + L"\r\n" + preflight + L"\r\n";
+        L"\r\nRead error: " + (ui.snapshot.error ? display_error(initial_language, *ui.snapshot.error) : L"") +
+        L"\r\nRead-only check.\r\n" + language_checks + files + L"\r\n" + preflight + L"\r\n";
     Handle file(CreateFileW(ui.check.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr));
     if (file.value == INVALID_HANDLE_VALUE) fail("create-GUI-read-check", GetLastError());
     write_file(file.value, {reinterpret_cast<const BYTE*>(report.data()), report.size() * sizeof(wchar_t)});
@@ -373,33 +501,59 @@ void create_controls(HWND hwnd, Window& ui) {
     };
 
     ui.title = label(L"Scarlett 2i2 Gen 2", 26, 25, 405, 46, ui.heading);
-    ui.device = label(L"Поиск Scarlett…", 48, 74, 350, 22, ui.regular);
-    ui.refresh_button = button(L"Обновить статус", 428, 41, 162, 38, refresh, BS_OWNERDRAW);
+    ui.device = label(L"", 48, 74, 350, 22, ui.regular);
+    ui.refresh_button = button(L"", 428, 25, 162, 37, refresh, BS_OWNERDRAW);
+    ui.language_label = label(L"", 408, 77, 76, 22, ui.regular);
+    ui.language_picker = control(hwnd, ui, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP,
+                                 485, 73, 105, 80, ui.regular, language_choice);
+    SendMessageW(ui.language_picker, CB_SETITEMHEIGHT, static_cast<WPARAM>(-1), px(ui, 23));
+    for (const auto* name : {L"English", L"Русский"}) {
+        require(SendMessageW(ui.language_picker, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(name)) >= 0,
+                "init-GUI-language-list");
+    }
+    SendMessageW(ui.language_picker, CB_SETCURSEL, static_cast<WPARAM>(ui.language), 0);
 
-    label(L"Текущая прошивка", 42, 146, 235, 23, ui.section);
+    ui.firmware_label = label(L"", 42, 146, 235, 23, ui.section);
     ui.firmware = label(L"—", 42, 173, 235, 37, ui.value);
     ui.revision = label(L"", 42, 215, 235, 22, ui.regular);
     label(L"Low Power Mode", 336, 146, 235, 23, ui.section);
     ui.power = label(L"—", 336, 173, 235, 37, ui.value);
-    ui.on = button(L"Включить", 336, 214, 109, 29, enable);
-    ui.off = button(L"Выключить", 453, 214, 119, 29, disable);
+    ui.on = button(L"", 336, 214, 109, 29, enable);
+    ui.off = button(L"", 453, 214, 119, 29, disable);
 
-    label(L"Запись прошивки", 42, 294, 212, 24, ui.section);
+    ui.write_label = label(L"", 42, 294, 212, 24, ui.section);
     ui.combo = control(hwnd, ui, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, 262, 289, 152, 100, ui.regular, builds);
     SendMessageW(ui.combo, CB_SETITEMHEIGHT, static_cast<WPARAM>(-1), px(ui, 24));
-    for (const auto build : {0u, old_build, new_build}) {
-        const auto text = build ? std::to_wstring(build) : L"Выбрать версию";
-        const auto row = SendMessageW(ui.combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(text.c_str()));
-        require(row >= 0 && SendMessageW(ui.combo, CB_SETITEMDATA, static_cast<WPARAM>(row), build) != CB_ERR,
-                "init-GUI-firmware-list");
-    }
-    SendMessageW(ui.combo, CB_SETCURSEL, 0, 0);
-    ui.write = button(L"Прошить…", 430, 286, 142, 38, install, BS_OWNERDRAW);
+    ui.write = button(L"", 430, 286, 142, 38, install, BS_OWNERDRAW);
 
-    label(L"Статус операции", 42, 371, 530, 23, ui.section);
+    ui.status_label = label(L"", 42, 371, 530, 23, ui.section);
     ui.status = control(hwnd, ui, L"EDIT", L"", WS_TABSTOP | WS_VSCROLL | ES_MULTILINE | ES_READONLY,
                         42, 397, 530, 50, ui.regular);
+    apply_language(ui);
     start_job(hwnd, ui, {});
+}
+
+bool confirm_flash(HWND hwnd, Language language, unsigned current, unsigned target) {
+    const std::wstring prompt = (target < current ? tr(language, L"Downgrade firmware from ", L"Понизить прошивку ") :
+        tr(language, L"Update firmware from ", L"Обновить прошивку ")) + std::to_wstring(current) +
+        tr(language, L" to ", L" → ") + std::to_wstring(target) +
+        tr(language, L"?\n\nScarlett will restart. Leave USB connected until the operation finishes.",
+                     L"?\n\nScarlett перезапустится. Оставьте USB подключённым до завершения.");
+    const TASKDIALOG_BUTTON buttons[]{
+        {IDYES, tr(language, L"Flash", L"Прошить")}, {IDCANCEL, tr(language, L"Cancel", L"Отмена")}
+    };
+    TASKDIALOGCONFIG config{};
+    config.cbSize = sizeof(config);
+    config.hwndParent = hwnd;
+    config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW;
+    config.pszWindowTitle = tr(language, L"Flash firmware", L"Запись прошивки");
+    config.pszMainIcon = TD_WARNING_ICON;
+    config.pszContent = prompt.c_str();
+    config.cButtons = static_cast<UINT>(std::size(buttons));
+    config.pButtons = buttons;
+    config.nDefaultButton = IDCANCEL;
+    int button = IDCANCEL;
+    return SUCCEEDED(TaskDialogIndirect(&config, &button, nullptr, nullptr)) && button == IDYES;
 }
 
 LRESULT dispatch(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam, Window& ui) {
@@ -422,9 +576,9 @@ LRESULT dispatch(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam, Window& 
     case WM_CTLCOLORSTATIC: {
         const auto child = reinterpret_cast<HWND>(lparam);
         const auto dc = reinterpret_cast<HDC>(wparam);
-        const bool header = child == ui.title || child == ui.device;
+        const bool header = child == ui.title || child == ui.device || child == ui.language_label;
         const auto fill = color(ui, header ? RGB(23, 32, 49) : RGB(255, 255, 255), COLOR_WINDOW);
-        const auto text = child == ui.title ? RGB(255, 255, 255) : child == ui.device ? RGB(203, 217, 235) :
+        const auto text = child == ui.title ? RGB(255, 255, 255) : header ? RGB(203, 217, 235) :
                           child == ui.revision || child == ui.status ? RGB(75, 89, 112) : RGB(28, 39, 57);
         SetTextColor(dc, color(ui, text, COLOR_WINDOWTEXT));
         SetBkColor(dc, fill);
@@ -454,8 +608,24 @@ LRESULT dispatch(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam, Window& 
         }
         break;
     case WM_COMMAND: {
-        if (!ui.check.empty() || ui.worker.joinable()) return 0;
+        if (ui.worker.joinable()) return 0;
         const auto id = LOWORD(wparam);
+        if (id == language_choice && HIWORD(wparam) == CBN_SELCHANGE) {
+            const auto selected = SendMessageW(ui.language_picker, CB_GETCURSEL, 0, 0);
+            if (selected == 0 || selected == 1) {
+                ui.language = static_cast<Language>(selected);
+                apply_language(ui);
+                const DWORD value = static_cast<DWORD>(ui.language);
+                if (ui.check.empty() && RegSetKeyValueW(HKEY_CURRENT_USER, preferences, L"Language",
+                    REG_DWORD, &value, sizeof(value)) != ERROR_SUCCESS) {
+                    MessageBoxW(hwnd, tr(ui.language, L"Could not save the language preference.",
+                                                     L"Не удалось сохранить выбранный язык."),
+                                L"Scarlett Gen 2 Tool", MB_ICONWARNING);
+                }
+            }
+            return 0;
+        }
+        if (!ui.check.empty()) return 0;
         if (id == builds) {
             update_controls(ui);
         } else if (id == refresh) {
@@ -467,27 +637,28 @@ LRESULT dispatch(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam, Window& 
             } else if (id == install) {
                 const auto target = chosen_build(ui);
                 if (!supported_build(target) || target == current) return 0;
-                const std::wstring prompt = (target < current ? L"Понизить прошивку " : L"Обновить прошивку ") +
-                    std::to_wstring(current) + L" → " + std::to_wstring(target) +
-                    L"?\n\nScarlett перезапустится. Оставьте USB подключённым до завершения.";
-                if (MessageBoxW(hwnd, prompt.c_str(), L"Запись прошивки", MB_YESNO | MB_DEFBUTTON2 | MB_ICONWARNING) == IDYES)
+                if (confirm_flash(hwnd, ui.language, current, target))
                     start_job(hwnd, ui, {Operation::firmware, current, target});
             }
         }
         return 0;
     }
     case stage_message:
-        SetWindowTextW(ui.status, reinterpret_cast<const wchar_t*>(lparam));
+        ui.operation_status.phase = reinterpret_cast<const char*>(lparam);
+        show_status(ui);
         return 0;
     case result_message: {
         const std::unique_ptr<Result> result(reinterpret_cast<Result*>(lparam));
         ui.worker.join();
         ui.snapshot = std::move(result->snapshot);
+        if (!ui.automatic_read) {
+            ui.operation_status = std::move(result->status);
+            show_status(ui);
+        }
         show_snapshot(ui);
-        if (!ui.automatic_read) SetWindowTextW(ui.status, result->status.c_str());
         update_controls(ui);
         if (!ui.check.empty()) {
-            try { check_window(ui); } catch (...) { ui.report_error = true; }
+            try { check_window(hwnd, ui); } catch (...) { ui.report_error = true; }
             DestroyWindow(hwnd);
         } else if (ui.refresh_pending) {
             SetTimer(hwnd, refresh_timer, 750, nullptr);
@@ -515,7 +686,9 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
         return dispatch(hwnd, message, wparam, lparam, *ui);
     } catch (...) {
         if (message == WM_CREATE) return -1;
-        if (ui->status) SetWindowTextW(ui->status, L"Ошибка Windows при обработке команды.");
+        if (ui->status)
+            SetWindowTextW(ui->status, tr(ui->language, L"Windows could not process the command.",
+                                                       L"Ошибка Windows при обработке команды."));
         return 0;
     }
 }
@@ -524,6 +697,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     SetProcessDPIAware();
     Window ui;
+    ui.language = load_language();
     if (const auto dc = GetDC(nullptr)) {
         ui.dpi = static_cast<UINT>(GetDeviceCaps(dc, LOGPIXELSX));
         ReleaseDC(nullptr, dc);
@@ -551,7 +725,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                                       style, CW_USEDEFAULT, CW_USEDEFAULT, area.right - area.left,
                                       area.bottom - area.top, nullptr, nullptr, instance, &ui);
     if (!hwnd) {
-        if (ui.check.empty()) MessageBoxW(nullptr, L"Не удалось создать окно.", L"Scarlett 2i2 Gen 2", MB_ICONERROR);
+        if (ui.check.empty())
+            MessageBoxW(nullptr, tr(ui.language, L"Could not create the window.", L"Не удалось создать окно."),
+                        L"Scarlett Gen 2 Tool", MB_ICONERROR);
         return 2;
     }
     if (ui.check.empty()) ShowWindow(hwnd, show);

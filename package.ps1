@@ -1,7 +1,7 @@
 param(
     [string]$InnoCompiler = 'ISCC.exe',
     [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$Version = '1.1.0'
+    [string]$Version = '1.2.0'
 )
 $ErrorActionPreference = 'Stop'
 $iscc = (Get-Command $InnoCompiler -CommandType Application).Source
